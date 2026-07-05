@@ -2,115 +2,128 @@ using UnityEngine;
 using System;
 
 /// <summary>
-/// Manages player camera look mechanics and checks for sarcophagus viewing.
-/// Implements first-person camera control with mobile touch input support.
+/// Manages player camera look mechanics with full cross-platform support.
+/// Supports: Mouse (Desktop), Touch (Mobile), Gamepad.
+/// Features smooth camera control with configurable sensitivity.
 /// </summary>
 public class PlayerCamera : MonoBehaviour
 {
     [SerializeField] private float mouseSensitivity = 2f;
-    [SerializeField] private float touchSensitivity = 1.5f;
+    [SerializeField] private float touchSensitivity = 0.5f;
+    [SerializeField] private float gamepadSensitivity = 2f;
     [SerializeField] private float xRotation = 0f;
     [SerializeField] private float maxLookAngle = 90f;
+    [SerializeField] private float smoothing = 0.1f;
     
-    [SerializeField] private Transform sarcophagusTransform; // Reference to sarcophagus for Rule 1
+    [SerializeField] private Transform sarcophagusTransform;
     [SerializeField] private float sarcophagusViewAngleTolerance = 30f;
     
     private bool isInitialized = false;
+    private Vector3 lastMousePosition = Vector3.zero;
+    private float smoothedXRotation = 0f;
+    private float smoothedYRotation = 0f;
     
-    // Events
     public event Action<bool> OnLookingSarcophagus;
     
     private void Start()
     {
         isInitialized = true;
+        lastMousePosition = Input.mousePosition;
         LockCursor();
+        Debug.Log("[PlayerCamera] Cross-platform camera initialized");
     }
     
     private void Update()
     {
         if (!isInitialized || !GameManager.Instance.IsGameRunning()) return;
-        
         HandleCameraInput();
         CheckSarcophagusLooking();
     }
     
-    /// <summary>
-    /// Handles camera input (mouse or touch).
-    /// </summary>
     private void HandleCameraInput()
     {
-        // Desktop input (mouse)
-        float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity;
-        float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity;
+        float deltaX = 0f;
+        float deltaY = 0f;
         
-        // Mobile input (touch)
+        #if UNITY_EDITOR || UNITY_STANDALONE
+        if (Input.mousePresent)
+        {
+            deltaX = Input.GetAxis("Mouse X") * mouseSensitivity;
+            deltaY = Input.GetAxis("Mouse Y") * mouseSensitivity;
+        }
+        #endif
+        
+        float gamepadX = Input.GetAxis("Horizontal_LookAround");
+        float gamepadY = Input.GetAxis("Vertical_LookAround");
+        
+        if (Mathf.Abs(gamepadX) > 0.1f || Mathf.Abs(gamepadY) > 0.1f)
+        {
+            deltaX = gamepadX * gamepadSensitivity;
+            deltaY = gamepadY * gamepadSensitivity;
+        }
+        
+        #if UNITY_ANDROID || UNITY_IOS
         if (Input.touchCount > 0)
         {
             Touch touch = Input.GetTouch(0);
             if (touch.phase == TouchPhase.Moved)
             {
-                mouseX = touch.deltaPosition.x * touchSensitivity * Time.deltaTime;
-                mouseY = touch.deltaPosition.y * touchSensitivity * Time.deltaTime;
+                deltaX = touch.deltaPosition.x * touchSensitivity * Time.deltaTime;
+                deltaY = -touch.deltaPosition.y * touchSensitivity * Time.deltaTime;
             }
         }
+        #endif
         
-        // Rotate around X axis (look up/down)
-        xRotation -= mouseY;
+        smoothedXRotation = Mathf.Lerp(smoothedXRotation, deltaX, smoothing);
+        smoothedYRotation = Mathf.Lerp(smoothedYRotation, -deltaY, smoothing);
+        
+        xRotation += smoothedYRotation;
         xRotation = Mathf.Clamp(xRotation, -maxLookAngle, maxLookAngle);
         
         transform.localRotation = Quaternion.Euler(xRotation, 0f, 0f);
-        
-        // Rotate player body around Y axis (look left/right)
-        transform.parent.Rotate(Vector3.up * mouseX);
+        transform.parent.Rotate(Vector3.up * smoothedXRotation);
     }
     
-    /// <summary>
-    /// Checks if player is looking at the sarcophagus (for Rule 1).
-    /// </summary>
     private void CheckSarcophagusLooking()
     {
         if (sarcophagusTransform == null) return;
         if (!GameManager.Instance.GetRuleManager().IsRule1Active()) return;
         
-        // Get direction from camera to sarcophagus
         Vector3 directionToSarcophagus = (sarcophagusTransform.position - transform.position).normalized;
         Vector3 cameraForward = transform.forward;
-        
-        // Calculate angle between camera forward and sarcophagus direction
         float angle = Vector3.Angle(cameraForward, directionToSarcophagus);
-        
         bool isLooking = angle < sarcophagusViewAngleTolerance;
         
-        // Update rule manager
         GameManager.Instance.GetRuleManager().SetLookingAtSarcophagus(isLooking);
         OnLookingSarcophagus?.Invoke(isLooking);
     }
     
-    /// <summary>
-    /// Locks cursor to center of screen (desktop).
-    /// </summary>
     private void LockCursor()
     {
         #if UNITY_EDITOR || UNITY_STANDALONE
         Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
         #endif
     }
     
-    /// <summary>
-    /// Unlocks cursor (for menus).
-    /// </summary>
     public void UnlockCursor()
     {
         #if UNITY_EDITOR || UNITY_STANDALONE
         Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
         #endif
     }
     
-    /// <summary>
-    /// Sets sarcophagus reference for Rule 1 checking.
-    /// </summary>
     public void SetSarcophagusReference(Transform sarcophagus)
     {
         sarcophagusTransform = sarcophagus;
+        Debug.Log("[PlayerCamera] Sarcophagus reference set");
+    }
+    
+    public void SetCameraSensitivity(float mouse, float touch, float gamepad)
+    {
+        mouseSensitivity = mouse;
+        touchSensitivity = touch;
+        gamepadSensitivity = gamepad;
     }
 }
